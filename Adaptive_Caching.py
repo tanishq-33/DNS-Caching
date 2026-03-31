@@ -216,6 +216,67 @@ class LFUCache:
 
 
 # =========================
+# BELATEDLY (MAD-style) CACHE
+# =========================
+class BelatedMADCache:
+    def __init__(self, cap=100, miss_latency=50):
+        self.cap = cap
+        self.cache = OrderedDict()
+
+        self.fetching = {}
+        self.pending = {}
+        self.aggregate_delay = {}
+
+        self.miss_latency = miss_latency
+
+        self.hits = 0
+        self.misses = 0
+        self.hit_hist = []
+
+    def get(self, key, t):
+
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            self.hits += 1
+            return True
+
+        if key in self.fetching:
+            self.pending[key] += 1
+            self.aggregate_delay[key] += self.miss_latency
+            self.hits += 1
+            return True
+
+        self.misses += 1
+        self.fetching[key] = t + self.miss_latency
+        self.pending[key] = 1
+        self.aggregate_delay[key] = self.miss_latency
+
+        return False
+
+    def update_fetches(self, t):
+        completed = [k for k, end in self.fetching.items() if end <= t]
+
+        for key in completed:
+            self._insert(key)
+            del self.fetching[key]
+            del self.pending[key]
+            del self.aggregate_delay[key]
+
+    def _insert(self, key):
+        if len(self.cache) >= self.cap:
+            victim = min(self.cache.keys(),
+                         key=lambda k: self.aggregate_delay.get(k, 0))
+            del self.cache[victim]
+
+        self.cache[key] = 1
+
+    def record(self):
+        total = self.hits + self.misses
+        hr = self.hits / total if total else 0
+        self.hit_hist.append(hr)
+
+
+# =========================
 # SIMULATION
 # =========================
 def simulate():
@@ -227,11 +288,15 @@ def simulate():
     lru = LRUCache()
     fifo = FIFOCache()
     lfu = LFUCache()
+    belated = BelatedMADCache()
 
     lat_d, lat_f, lat_l = [], [], []
-    lat_fifo, lat_lfu = [], []
+    lat_fifo, lat_lfu, lat_b = [], [], []
 
     for req, t in zip(requests, time_steps):
+
+        # BELATED UPDATE
+        belated.update_fetches(t)
 
         # d-TTL
         if dttl.get(req, t):
@@ -273,64 +338,67 @@ def simulate():
             lfu.put(req)
         lfu.record()
 
-    return dttl, fttl, lru, fifo, lfu, lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode
+        # BELATED
+        if belated.get(req, t):
+            lat_b.append(5)
+        else:
+            lat_b.append(50)
+        belated.record()
+
+    return dttl, fttl, lru, fifo, lfu, belated, \
+           lat_d, lat_f, lat_l, lat_fifo, lat_lfu, lat_b, mode
 
 
 # =========================
 # EVALUATION
 # =========================
-def evaluate(dttl, fttl, lru, fifo, lfu,
-             lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode):
+def evaluate(dttl, fttl, lru, fifo, lfu, belated,
+             lat_d, lat_f, lat_l, lat_fifo, lat_lfu, lat_b, mode):
 
     def metrics(lat, hits, misses):
         hr = hits / (hits + misses)
         avg_lat = sum(lat) / len(lat)
         return hr, avg_lat
 
-    d_hr, d_lat = metrics(lat_d, dttl.hits, dttl.misses)
-    f_hr, f_lat = metrics(lat_f, fttl.hits, fttl.misses)
-    l_hr, l_lat = metrics(lat_l, lru.hits, lru.misses)
-    fi_hr, fi_lat = metrics(lat_fifo, fifo.hits, fifo.misses)
-    lf_hr, lf_lat = metrics(lat_lfu, lfu.hits, lfu.misses)
-
     print("\n--- PERFORMANCE ---")
-    print(f"d-TTL  -> HitRate: {d_hr:.3f}, Latency: {d_lat:.2f}")
-    print(f"f-TTL  -> HitRate: {f_hr:.3f}, Latency: {f_lat:.2f}")
-    print(f"LRU    -> HitRate: {l_hr:.3f}, Latency: {l_lat:.2f}")
-    print(f"FIFO   -> HitRate: {fi_hr:.3f}, Latency: {fi_lat:.2f}")
-    print(f"LFU    -> HitRate: {lf_hr:.3f}, Latency: {lf_lat:.2f}")
+
+    print(f"d-TTL  -> HitRate: {metrics(lat_d, dttl.hits, dttl.misses)[0]:.3f}")
+    print(f"f-TTL  -> HitRate: {metrics(lat_f, fttl.hits, fttl.misses)[0]:.3f}")
+    print(f"LRU    -> HitRate: {metrics(lat_l, lru.hits, lru.misses)[0]:.3f}")
+    print(f"FIFO   -> HitRate: {metrics(lat_fifo, fifo.hits, fifo.misses)[0]:.3f}")
+    print(f"LFU    -> HitRate: {metrics(lat_lfu, lfu.hits, lfu.misses)[0]:.3f}")
+    print(f"Belated-> HitRate: {metrics(lat_b, belated.hits, belated.misses)[0]:.3f}")
 
 
 # =========================
 # PLOTTING
 # =========================
-def plot(dttl, fttl, lru, fifo, lfu,
-         lat_d, lat_f, lat_l, lat_fifo, lat_lfu):
+def plot(dttl, fttl, lru, fifo, lfu, belated,
+         lat_d, lat_f, lat_l, lat_fifo, lat_lfu, lat_b):
 
     plt.figure(figsize=(12, 9))
 
-    # Hit rate
     plt.subplot(3, 1, 1)
     plt.plot(dttl.hit_hist, label="d-TTL")
     plt.plot(fttl.hit_hist, label="f-TTL")
     plt.plot(lru.hit_hist, label="LRU")
     plt.plot(fifo.hit_hist, label="FIFO")
     plt.plot(lfu.hit_hist, label="LFU")
+    plt.plot(belated.hit_hist, label="Belated")
     plt.legend()
     plt.title("Hit Rate Comparison")
 
-    # d-TTL theta
     plt.subplot(3, 1, 2)
     plt.plot(dttl.theta_hist)
     plt.title("d-TTL Adaptation")
 
-    # Latency
     plt.subplot(3, 1, 3)
     plt.plot(lat_d, label="d-TTL")
     plt.plot(lat_f, label="f-TTL")
     plt.plot(lat_l, label="LRU")
     plt.plot(lat_fifo, label="FIFO")
     plt.plot(lat_lfu, label="LFU")
+    plt.plot(lat_b, label="Belated")
     plt.legend()
     plt.title("Latency Comparison")
 
@@ -342,10 +410,11 @@ def plot(dttl, fttl, lru, fifo, lfu,
 # MAIN
 # =========================
 if __name__ == "__main__":
-    dttl, fttl, lru, fifo, lfu, lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode = simulate()
+    dttl, fttl, lru, fifo, lfu, belated, \
+    lat_d, lat_f, lat_l, lat_fifo, lat_lfu, lat_b, mode = simulate()
 
-    evaluate(dttl, fttl, lru, fifo, lfu,
-             lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode)
+    evaluate(dttl, fttl, lru, fifo, lfu, belated,
+             lat_d, lat_f, lat_l, lat_fifo, lat_lfu, lat_b, mode)
 
-    plot(dttl, fttl, lru, fifo, lfu,
-         lat_d, lat_f, lat_l, lat_fifo, lat_lfu)
+    plot(dttl, fttl, lru, fifo, lfu, belated,
+         lat_d, lat_f, lat_l, lat_fifo, lat_lfu, lat_b) 
