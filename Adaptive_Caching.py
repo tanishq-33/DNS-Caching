@@ -1,6 +1,6 @@
 import random
 import matplotlib.pyplot as plt
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 # =========================
 # LOAD DNS TRAFFIC FROM FILE
@@ -141,6 +141,81 @@ class LRUCache:
 
 
 # =========================
+# FIFO CACHE
+# =========================
+class FIFOCache:
+    def __init__(self, cap=100):
+        self.queue = deque()
+        self.set = set()
+        self.cap = cap
+        self.hits = 0
+        self.misses = 0
+        self.hit_hist = []
+
+    def get(self, key):
+        if key in self.set:
+            self.hits += 1
+            return True
+        self.misses += 1
+        return False
+
+    def put(self, key):
+        if key not in self.set:
+            if len(self.queue) >= self.cap:
+                old = self.queue.popleft()
+                self.set.remove(old)
+            self.queue.append(key)
+            self.set.add(key)
+
+    def record(self):
+        total = self.hits + self.misses
+        hr = self.hits / total if total else 0
+        self.hit_hist.append(hr)
+
+
+# =========================
+# LFU CACHE
+# =========================
+class LFUCache:
+    def __init__(self, cap=100):
+        self.cap = cap
+        self.cache = {}
+        self.freq = {}
+        self.hits = 0
+        self.misses = 0
+        self.hit_hist = []
+
+    def get(self, key):
+        if key in self.cache:
+            self.freq[key] += 1
+            self.hits += 1
+            return True
+        self.misses += 1
+        return False
+
+    def put(self, key):
+        if self.cap == 0:
+            return
+
+        if key in self.cache:
+            self.freq[key] += 1
+            return
+
+        if len(self.cache) >= self.cap:
+            lfu_key = min(self.freq, key=lambda k: self.freq[k])
+            del self.cache[lfu_key]
+            del self.freq[lfu_key]
+
+        self.cache[key] = 1
+        self.freq[key] = 1
+
+    def record(self):
+        total = self.hits + self.misses
+        hr = self.hits / total if total else 0
+        self.hit_hist.append(hr)
+
+
+# =========================
 # SIMULATION
 # =========================
 def simulate():
@@ -150,8 +225,11 @@ def simulate():
     dttl = DTTLCache()
     fttl = FTTLCache()
     lru = LRUCache()
+    fifo = FIFOCache()
+    lfu = LFUCache()
 
     lat_d, lat_f, lat_l = [], [], []
+    lat_fifo, lat_lfu = [], []
 
     for req, t in zip(requests, time_steps):
 
@@ -179,13 +257,31 @@ def simulate():
             lru.put(req)
         lru.record()
 
-    return dttl, fttl, lru, lat_d, lat_f, lat_l, mode
+        # FIFO
+        if fifo.get(req):
+            lat_fifo.append(5)
+        else:
+            lat_fifo.append(50)
+            fifo.put(req)
+        fifo.record()
+
+        # LFU
+        if lfu.get(req):
+            lat_lfu.append(5)
+        else:
+            lat_lfu.append(50)
+            lfu.put(req)
+        lfu.record()
+
+    return dttl, fttl, lru, fifo, lfu, lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode
 
 
 # =========================
 # EVALUATION
 # =========================
-def evaluate(dttl, fttl, lru, lat_d, lat_f, lat_l, mode):
+def evaluate(dttl, fttl, lru, fifo, lfu,
+             lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode):
+
     def metrics(lat, hits, misses):
         hr = hits / (hits + misses)
         avg_lat = sum(lat) / len(lat)
@@ -194,36 +290,47 @@ def evaluate(dttl, fttl, lru, lat_d, lat_f, lat_l, mode):
     d_hr, d_lat = metrics(lat_d, dttl.hits, dttl.misses)
     f_hr, f_lat = metrics(lat_f, fttl.hits, fttl.misses)
     l_hr, l_lat = metrics(lat_l, lru.hits, lru.misses)
+    fi_hr, fi_lat = metrics(lat_fifo, fifo.hits, fifo.misses)
+    lf_hr, lf_lat = metrics(lat_lfu, lfu.hits, lfu.misses)
 
     print("\n--- PERFORMANCE ---")
     print(f"d-TTL  -> HitRate: {d_hr:.3f}, Latency: {d_lat:.2f}")
     print(f"f-TTL  -> HitRate: {f_hr:.3f}, Latency: {f_lat:.2f}")
     print(f"LRU    -> HitRate: {l_hr:.3f}, Latency: {l_lat:.2f}")
-
-    print(f"\nTraffic Type: {mode}")
+    print(f"FIFO   -> HitRate: {fi_hr:.3f}, Latency: {fi_lat:.2f}")
+    print(f"LFU    -> HitRate: {lf_hr:.3f}, Latency: {lf_lat:.2f}")
 
 
 # =========================
 # PLOTTING
 # =========================
-def plot(dttl, fttl, lru, lat_d, lat_f, lat_l):
+def plot(dttl, fttl, lru, fifo, lfu,
+         lat_d, lat_f, lat_l, lat_fifo, lat_lfu):
+
     plt.figure(figsize=(12, 9))
 
+    # Hit rate
     plt.subplot(3, 1, 1)
     plt.plot(dttl.hit_hist, label="d-TTL")
     plt.plot(fttl.hit_hist, label="f-TTL")
     plt.plot(lru.hit_hist, label="LRU")
+    plt.plot(fifo.hit_hist, label="FIFO")
+    plt.plot(lfu.hit_hist, label="LFU")
     plt.legend()
     plt.title("Hit Rate Comparison")
 
+    # d-TTL theta
     plt.subplot(3, 1, 2)
     plt.plot(dttl.theta_hist)
     plt.title("d-TTL Adaptation")
 
+    # Latency
     plt.subplot(3, 1, 3)
     plt.plot(lat_d, label="d-TTL")
     plt.plot(lat_f, label="f-TTL")
     plt.plot(lat_l, label="LRU")
+    plt.plot(lat_fifo, label="FIFO")
+    plt.plot(lat_lfu, label="LFU")
     plt.legend()
     plt.title("Latency Comparison")
 
@@ -235,39 +342,10 @@ def plot(dttl, fttl, lru, lat_d, lat_f, lat_l):
 # MAIN
 # =========================
 if __name__ == "__main__":
-    dttl, fttl, lru, lat_d, lat_f, lat_l, mode = simulate()
-    evaluate(dttl, fttl, lru, lat_d, lat_f, lat_l, mode)
-    plot(dttl, fttl, lru, lat_d, lat_f, lat_l)
+    dttl, fttl, lru, fifo, lfu, lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode = simulate()
 
+    evaluate(dttl, fttl, lru, fifo, lfu,
+             lat_d, lat_f, lat_l, lat_fifo, lat_lfu, mode)
 
-# import random
-
-# def generate_dns_file(filename="dns_traffic.txt", n=30000):
-#     top_domains = [
-#         "google.com", "youtube.com", "facebook.com", "amazon.com",
-#         "instagram.com", "twitter.com", "netflix.com", "reddit.com"
-#     ]
-
-#     long_tail = [f"site{i}.com" for i in range(1, 1000)]
-#     domains = top_domains + long_tail
-
-#     weights = [1/(i+1) for i in range(len(domains))]
-#     total = sum(weights)
-#     probs = [w/total for w in weights]
-
-#     with open(filename, "w") as f:
-#         t = 1
-#         for _ in range(n):
-#             if random.random() < 0.1:  # burst
-#                 d = random.choice(top_domains)
-#                 for _ in range(random.randint(5, 15)):
-#                     f.write(f"{t} {d}\n")
-#                     t += 1
-#             else:
-#                 d = random.choices(domains, probs)[0]
-#                 f.write(f"{t} {d}\n")
-#                 t += 1
-
-#     print("dns_traffic.txt generated!")
-
-# generate_dns_file()
+    plot(dttl, fttl, lru, fifo, lfu,
+         lat_d, lat_f, lat_l, lat_fifo, lat_lfu)
