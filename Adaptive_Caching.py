@@ -362,13 +362,35 @@ def evaluate(dttl, fttl, lru, fifo, lfu, belated,
 
     print("\n--- PERFORMANCE ---")
 
-    print(f"d-TTL  -> HitRate: {metrics(lat_d, dttl.hits, dttl.misses)[0]:.3f}")
-    print(f"f-TTL  -> HitRate: {metrics(lat_f, fttl.hits, fttl.misses)[0]:.3f}")
-    print(f"LRU    -> HitRate: {metrics(lat_l, lru.hits, lru.misses)[0]:.3f}")
-    print(f"FIFO   -> HitRate: {metrics(lat_fifo, fifo.hits, fifo.misses)[0]:.3f}")
-    print(f"LFU    -> HitRate: {metrics(lat_lfu, lfu.hits, lfu.misses)[0]:.3f}")
-    print(f"Belated-> HitRate: {metrics(lat_b, belated.hits, belated.misses)[0]:.3f}")
+    hr, lat = metrics(lat_d, dttl.hits, dttl.misses)
+    print(f"d-TTL   -> HitRate: {hr:.3f}, Avg Latency: {lat:.2f}")
 
+    hr, lat = metrics(lat_f, fttl.hits, fttl.misses)
+    print(f"f-TTL   -> HitRate: {hr:.3f}, Avg Latency: {lat:.2f}")
+
+    hr, lat = metrics(lat_l, lru.hits, lru.misses)
+    print(f"LRU     -> HitRate: {hr:.3f}, Avg Latency: {lat:.2f}")
+
+    hr, lat = metrics(lat_fifo, fifo.hits, fifo.misses)
+    print(f"FIFO    -> HitRate: {hr:.3f}, Avg Latency: {lat:.2f}")
+
+    hr, lat = metrics(lat_lfu, lfu.hits, lfu.misses)
+    print(f"LFU     -> HitRate: {hr:.3f}, Avg Latency: {lat:.2f}")
+
+    hr, lat = metrics(lat_b, belated.hits, belated.misses)
+    print(f"Belated -> HitRate: {hr:.3f}, Avg Latency: {lat:.2f}")
+
+def moving_avg(arr, window=500):
+    res = []
+    s = 0
+
+    for i in range(len(arr)):
+        s += arr[i]
+        if i >= window:
+            s -= arr[i - window]
+        res.append(s / min(i + 1, window))
+
+    return res
 
 # =========================
 # PLOTTING
@@ -378,29 +400,33 @@ def plot(dttl, fttl, lru, fifo, lfu, belated,
 
     plt.figure(figsize=(12, 9))
 
+    # Hit rate
     plt.subplot(3, 1, 1)
     plt.plot(dttl.hit_hist, label="d-TTL")
     plt.plot(fttl.hit_hist, label="f-TTL")
     plt.plot(lru.hit_hist, label="LRU")
     plt.plot(fifo.hit_hist, label="FIFO")
     plt.plot(lfu.hit_hist, label="LFU")
-    plt.plot(belated.hit_hist, label="Belated")
+    plt.plot(belated.hit_hist, label="Belatedly")
     plt.legend()
     plt.title("Hit Rate Comparison")
 
+    # d-TTL theta
     plt.subplot(3, 1, 2)
     plt.plot(dttl.theta_hist)
     plt.title("d-TTL Adaptation")
 
+    # Latency
     plt.subplot(3, 1, 3)
-    plt.plot(lat_d, label="d-TTL")
-    plt.plot(lat_f, label="f-TTL")
-    plt.plot(lat_l, label="LRU")
-    plt.plot(lat_fifo, label="FIFO")
-    plt.plot(lat_lfu, label="LFU")
-    plt.plot(lat_b, label="Belated")
+
+    plt.plot(moving_avg(lat_d), label="d-TTL")
+    plt.plot(moving_avg(lat_f), label="f-TTL")
+    plt.plot(moving_avg(lat_l), label="LRU")
+    plt.plot(moving_avg(lat_fifo), label="FIFO")
+    plt.plot(moving_avg(lat_lfu), label="LFU")
+    plt.plot(moving_avg(lat_b), label="Belated")
     plt.legend()
-    plt.title("Latency Comparison")
+    plt.title("Latency Comparison (Smoothed)")
 
     plt.tight_layout()
     plt.show()
