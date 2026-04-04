@@ -114,7 +114,7 @@ class FTTLCache:
 # LRU CACHE
 # =========================
 class LRUCache:
-    def __init__(self, cap=100):
+    def __init__(self, cap=20):
         self.cache = OrderedDict()
         self.cap = cap
         self.hits = 0
@@ -144,7 +144,7 @@ class LRUCache:
 # FIFO CACHE
 # =========================
 class FIFOCache:
-    def __init__(self, cap=100):
+    def __init__(self, cap=20):
         self.queue = deque()
         self.set = set()
         self.cap = cap
@@ -177,7 +177,7 @@ class FIFOCache:
 # LFU CACHE
 # =========================
 class LFUCache:
-    def __init__(self, cap=100):
+    def __init__(self, cap=20):
         self.cap = cap
         self.cache = {}
         self.freq = {}
@@ -219,7 +219,7 @@ class LFUCache:
 # BELATEDLY (MAD-style) CACHE
 # =========================
 class BelatedMADCache:
-    def __init__(self, cap=100, miss_latency=50):
+    def __init__(self, cap=20, miss_latency=50):
         self.cap = cap
         self.cache = OrderedDict()
 
